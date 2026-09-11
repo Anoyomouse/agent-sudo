@@ -1,5 +1,7 @@
 # agent-sudo
 
+A standing approval daemon running in a second terminal session, gating `sudo` for AI coding agents on a human's explicit approval.
+
 Let an AI coding agent (Claude Code, Cursor, etc.) run `sudo` commands, gated on a human's explicit, out-of-band approval — without giving the agent passwordless sudo, and without relying on a GUI dialog.
 
 ## Problem
