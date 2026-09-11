@@ -49,6 +49,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import getpass
+import json
 import os
 import socket
 import sys
@@ -84,6 +85,28 @@ async def _default_password_reader(prompt: str) -> str:
     return await asyncio.to_thread(getpass.getpass, prompt)
 
 
+def _default_record_success(credential_mode: str, now: float) -> None:
+    # Best-effort, human-side-only receipt that a real credential was actually
+    # validated against the real `sudo` on this machine -- not a synthetic
+    # check. `doctor` reads this (non-interactively, from the agent's side)
+    # so an agent can tell "the pipeline has proven it works" apart from
+    # "the socket exists and permissions look fine", without ever blocking
+    # on a human. Written atomically (temp file + rename) so a concurrent
+    # `doctor` read never sees a half-written file.
+    path = paths_mod.last_success_path()
+    payload = json.dumps({"ts": now, "credential_mode": credential_mode}) + "\n"
+    tmp_path = path.with_name(path.name + ".tmp")
+    try:
+        fd = os.open(str(tmp_path), os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(payload)
+        os.replace(tmp_path, path)
+    except OSError as exc:
+        # Diagnostic history, not the approval itself -- never fail an
+        # already-approved request over this.
+        print(f"[agent-sudo] could not record successful approval to {path}: {exc}", file=sys.stderr)
+
+
 class Daemon:
     def __init__(
         self,
@@ -97,6 +120,7 @@ class Daemon:
         password_reader=_default_password_reader,
         refresh_timestamp=sudo_cache.refresh_timestamp,
         validate_password=sudo_cache.validate_password,
+        record_success=_default_record_success,
     ):
         if credential_mode not in ("timestamp", "relay"):
             raise ValueError(f"unknown credential_mode: {credential_mode!r}")
@@ -111,6 +135,7 @@ class Daemon:
         self._password_reader = password_reader
         self._refresh_timestamp = refresh_timestamp
         self._validate_password = validate_password
+        self._record_success = record_success
 
         self.totp = totp.TotpVerifier(secret, now=now) if credential_mode == "timestamp" else None
         self.replay_guard = ReplayGuard()
@@ -210,6 +235,10 @@ class Daemon:
                 reply = protocol.AskpassReplyMsg(nonce=msg.nonce, result="deny", reason="nonce_unknown")
             else:
                 reply = protocol.AskpassReplyMsg(nonce=msg.nonce, result="approve", secret=secret)
+                # Strongest available proof for this mode: the real askpass
+                # binary really was invoked by a real `sudo -A`, really
+                # queried this socket, and really got a real secret back.
+                self._record_success(self.credential_mode, self._now())
             await self._reply(writer, reply)
             return
 
@@ -330,6 +359,11 @@ class Daemon:
                 ok = await asyncio.to_thread(self._refresh_timestamp)
                 if not ok:
                     return "deny", "sudo_refresh_failed"
+                # Strongest available proof for this mode: a real `sudo -v`
+                # actually succeeded in the daemon's own session. Askpass is
+                # never expected to be consulted here, so this is the
+                # equivalent of the relay-mode askpass_query receipt above.
+                self._record_success(self.credential_mode, self._now())
                 return "approve", None
 
             self._print_retry(req, f"invalid code ({fail_reason})", deadline)

@@ -6,15 +6,26 @@ proactively, instead of letting the human discover it later as a wall of
 confusing "askpass invoked unexpectedly" denials from the daemon. That check
 (and the TOTP secret check) is skipped entirely in "relay" mode, which needs
 neither.
+
+Every check here is non-interactive by design -- an agent must be able to
+call `doctor` without risking a hang waiting on a human. That includes
+check_last_live_approval: it only ever reads a receipt the daemon already
+wrote the last time a *real* credential was validated end-to-end (see
+daemon.py's _default_record_success), never triggers a fresh approval
+itself. That's what actually confirms the pipeline works in production, as
+opposed to the other checks here, which only confirm the environment looks
+correct.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import socket
 import subprocess
 import sys
+import time
 
 from . import paths
 
@@ -110,6 +121,42 @@ def check_askpass_consulted() -> CheckResult:
     return True, "askpass is consulted as expected (a broken askpass correctly fails sudo)"
 
 
+def _format_age(seconds: float) -> str:
+    if seconds < 90:
+        return f"{seconds:.0f}s"
+    minutes = seconds / 60
+    if minutes < 90:
+        return f"{minutes:.0f}m"
+    hours = minutes / 60
+    if hours < 48:
+        return f"{hours:.0f}h"
+    return f"{hours / 24:.0f}d"
+
+
+def check_last_live_approval() -> CheckResult:
+    """Non-interactive: reads a receipt the daemon itself wrote the last time
+    a real credential was validated end-to-end (see daemon.py's
+    _default_record_success). Never triggers a live approval on its own --
+    an agent must be able to call `doctor` without risking a hang waiting on
+    a human, so this only ever reports history, never generates it."""
+    path = paths.last_success_path()
+    if not path.exists():
+        return False, (
+            f"{path} does not exist -- no real approval has ever completed end-to-end yet. "
+            "This isn't necessarily broken (a fresh install has no history), but it does mean "
+            "nothing has actually proven the full pipeline works: run one real `agent-sudo <cmd>` "
+            "and approve it once, then re-run doctor"
+        )
+    try:
+        data = json.loads(path.read_text())
+        ts = float(data["ts"])
+        mode = data.get("credential_mode", "?")
+    except (OSError, ValueError, KeyError) as exc:
+        return False, f"could not read/parse {path}: {exc!r}"
+    age = time.time() - ts
+    return True, f"last real approval succeeded {_format_age(age)} ago (credential_mode={mode})"
+
+
 def build_checks(credential_mode: str) -> list[tuple[str, callable]]:
     checks: list[tuple[str, callable]] = [
         ("daemon socket reachable", check_daemon_reachable),
@@ -120,6 +167,7 @@ def build_checks(credential_mode: str) -> list[tuple[str, callable]]:
         checks.append(("TOTP secret permissions", check_totp_secret))
         checks.append(("!tty_tickets / timestamp_type=global", check_tty_tickets))
     checks.append(("askpass is actually consulted (no NOPASSWD bypass)", check_askpass_consulted))
+    checks.append(("last real end-to-end approval on record", check_last_live_approval))
     return checks
 
 

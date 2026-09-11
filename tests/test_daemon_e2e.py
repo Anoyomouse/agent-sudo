@@ -58,6 +58,10 @@ async def _send_and_recv(sock_path, msg: protocol.Message) -> protocol.Message:
 async def _start_daemon(tmp_path, **daemon_kwargs):
     sock_path = tmp_path / "agent-sudo.sock"
     daemon_kwargs.setdefault("refresh_timestamp", lambda: True)
+    # Real record_success writes under ~/.agent-sudo -- these tests don't set
+    # AGENT_SUDO_HOME, so default to a no-op here and let the tests that
+    # actually care about it inject their own spy.
+    daemon_kwargs.setdefault("record_success", lambda *a, **k: None)
     daemon = Daemon(SECRET, **daemon_kwargs)
     task = asyncio.create_task(daemon.serve(sock_path))
     await _wait_for_socket(sock_path)
@@ -258,6 +262,97 @@ async def test_relay_rate_limits_after_max_wrong_attempts(tmp_path):
         verdict = await asyncio.wait_for(_send_and_recv(sock_path, req), timeout=5)
         assert verdict.result == "deny"
         assert verdict.reason == "password_rate_limited"
+    finally:
+        await _stop(task)
+
+
+# -- last_success recording ----------------------------------------------
+
+
+async def test_timestamp_approve_records_success(tmp_path):
+    code = pyotp.TOTP(SECRET).at(time.time())
+    calls = []
+    _, sock_path, task = await _start_daemon(
+        tmp_path,
+        credential_mode="timestamp",
+        ttl_seconds=5,
+        input_reader=scripted_input([code]),
+        record_success=lambda mode, ts: calls.append((mode, ts)),
+    )
+    try:
+        req = protocol.RequestMsg(nonce="n-record-ts", pid=1, uid=1, cwd="/", command=["true"])
+        verdict = await asyncio.wait_for(_send_and_recv(sock_path, req), timeout=5)
+        assert verdict.result == "approve"
+        assert len(calls) == 1
+        mode, ts = calls[0]
+        assert mode == "timestamp"
+        assert ts == pytest.approx(time.time(), abs=5)
+    finally:
+        await _stop(task)
+
+
+async def test_timestamp_deny_never_records_success(tmp_path):
+    calls = []
+    _, sock_path, task = await _start_daemon(
+        tmp_path,
+        credential_mode="timestamp",
+        ttl_seconds=5,
+        input_reader=scripted_input(["deny"]),
+        record_success=lambda mode, ts: calls.append((mode, ts)),
+    )
+    try:
+        req = protocol.RequestMsg(nonce="n-record-ts-deny", pid=1, uid=1, cwd="/", command=["true"])
+        verdict = await asyncio.wait_for(_send_and_recv(sock_path, req), timeout=5)
+        assert verdict.result == "deny"
+        assert not calls
+    finally:
+        await _stop(task)
+
+
+async def test_relay_askpass_query_records_success_not_at_verdict_time(tmp_path):
+    calls = []
+    _, sock_path, task = await _start_relay_daemon(
+        tmp_path,
+        ttl_seconds=5,
+        password_reader=scripted_input(["correct-horse"]),
+        record_success=lambda mode, ts: calls.append((mode, ts)),
+    )
+    try:
+        req = protocol.RequestMsg(nonce="n-record-relay", pid=1, uid=1, cwd="/", command=["true"])
+        verdict = await asyncio.wait_for(_send_and_recv(sock_path, req), timeout=5)
+        assert verdict.result == "approve"
+        # Password validated -> verdict approved, but nothing recorded yet:
+        # the real proof is the askpass round trip, not the daemon-side check.
+        assert not calls
+
+        query = protocol.AskpassQueryMsg(nonce="n-record-relay", pid=1)
+        reply = await asyncio.wait_for(_send_and_recv(sock_path, query), timeout=5)
+        assert reply.result == "approve"
+        assert len(calls) == 1
+        mode, ts = calls[0]
+        assert mode == "relay"
+        assert ts == pytest.approx(time.time(), abs=5)
+    finally:
+        await _stop(task)
+
+
+async def test_relay_unconsumed_askpass_query_never_records_success(tmp_path):
+    calls = []
+    _, sock_path, task = await _start_relay_daemon(
+        tmp_path,
+        ttl_seconds=0.3,
+        password_reader=scripted_input(["nope"]),
+        record_success=lambda mode, ts: calls.append((mode, ts)),
+    )
+    try:
+        req = protocol.RequestMsg(nonce="n-record-relay-wrong", pid=1, uid=1, cwd="/", command=["true"])
+        verdict = await asyncio.wait_for(_send_and_recv(sock_path, req), timeout=3)
+        assert verdict.result == "deny"
+
+        query = protocol.AskpassQueryMsg(nonce="n-record-relay-wrong", pid=1)
+        reply = await asyncio.wait_for(_send_and_recv(sock_path, query), timeout=5)
+        assert reply.result == "deny"
+        assert not calls
     finally:
         await _stop(task)
 
