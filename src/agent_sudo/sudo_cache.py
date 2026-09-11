@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """sudo integration for both credential-release modes.
 
 refresh_timestamp() is "timestamp" mode's mechanism: run in the daemon's own

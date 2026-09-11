@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """TotpVerifier accept/reject/replay/rate-limit behavior, with an injectable clock."""
 
 import pyotp

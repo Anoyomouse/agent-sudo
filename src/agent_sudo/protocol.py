@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Wire protocol: newline-delimited JSON, one message per line.
 
 Transport-agnostic on purpose — encode_message()/decode_message() work on

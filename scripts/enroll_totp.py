@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """One-shot TOTP enrollment for the agent-sudo approval daemon.
 
 Run this once, on the machine that will run the daemon, before starting

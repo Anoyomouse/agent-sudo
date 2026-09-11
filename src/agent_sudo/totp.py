@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """TOTP secret provisioning and verification.
 
 The secret lives only at paths.totp_secret_path() (0600, daemon-owned) and

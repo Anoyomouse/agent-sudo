@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """`agent-sudo-askpass` -- the SUDO_ASKPASS target.
 
 Behavior depends on the daemon's credential_mode, transparently to this file

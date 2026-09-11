@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Nonce generation and replay tracking.
 
 The nonce is the *sole* basis of trust correlating "a human approved this

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Wire-format encode/decode round-trips and malformed-input handling."""
 
 import pytest

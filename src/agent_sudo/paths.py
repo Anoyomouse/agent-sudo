@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Resolution and permission handling for everything under ~/.agent-sudo/.
 
 All paths are derived from a single base directory so tests can redirect the

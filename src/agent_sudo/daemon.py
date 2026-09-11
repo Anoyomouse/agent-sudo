@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """The approval daemon — run in a second terminal/session the agent never touches.
 
 One serial approval worker processes queued requests one at a time (a human

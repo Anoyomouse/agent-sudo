@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Exception hierarchy shared across the wrapper, askpass helper, and daemon."""
 
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """End-to-end tests against a real Daemon + real Unix socket, with the human
 side replaced by a scripted input_reader instead of a live TOTP entry. This
 is the harness described in the design plan: it proves the approve/deny/

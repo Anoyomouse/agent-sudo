@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """`agent-sudo doctor` -- environment/sudoers preflight checks.
 
 In "timestamp" mode, catches the missing-`!tty_tickets` prerequisite

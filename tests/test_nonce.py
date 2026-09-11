@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Nonce generation format and ReplayGuard behavior."""
 
 from agent_sudo import nonce

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """`agent-sudo <cmd...>` -- the only entrypoint the agent calls.
 
 Two-phase flow: block for an explicit approve verdict from the daemon
