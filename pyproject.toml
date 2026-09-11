@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-sudo"
+version = "0.1.0"
+description = "Human-approval-gated sudo for AI coding agents, via a TOTP-backed second-session daemon"
+requires-python = ">=3.11"
+dependencies = [
+    "pyotp>=2.9",
+]
+
+[project.optional-dependencies]
+password-cache = ["pyrage>=1.2"]
+enroll = ["qrcode>=7.4"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "pylint>=3.2"]
+
+[project.scripts]
+agent-sudo = "agent_sudo.cli:main"
+agent-sudo-askpass = "agent_sudo.askpass:main"
+agent-sudo-daemon = "agent_sudo.daemon:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "sudo_integration: requires real sudo privileges and a TTY; skipped by default",
+]
+
+[tool.pylint."messages control"]
+# missing-function-docstring/missing-class-docstring: this project's convention is
+# self-documenting names plus a module-level docstring explaining WHY, not a
+# docstring on every function -- see module docstrings for the real documentation.
+disable = ["missing-function-docstring", "missing-class-docstring"]
+
+[tool.pylint.format]
+max-line-length = 110
+
+[tool.pylint.design]
+# Bumped from defaults for a handful of deliberately dependency-injection-heavy
+# classes (Daemon, TotpVerifier) where every external interaction point (clock,
+# input readers, sudo callables) is an injected, overridable parameter so tests
+# never need a real terminal/TOTP app/sudo installation. Not a general license
+# to grow arbitrarily -- see daemon.py/totp.py if these ever need raising further.
+max-attributes = 16
+max-args = 10
+max-returns = 8
