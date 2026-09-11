@@ -99,7 +99,9 @@ run one real `agent-sudo <cmd>` and approve it once to generate the receipt.
 
 ## Status
 
-Implemented and tested (41 tests passing: protocol framing, nonce replay/expiry, TOTP verification, and a real-daemon-plus-socket end-to-end harness covering both credential modes with a scripted human instead of a live one).
+Implemented and tested (48 tests passing: protocol framing, nonce replay/expiry, TOTP verification, the last-live-approval receipt, and a real-daemon-plus-socket end-to-end harness covering both credential modes with a scripted human instead of a live one).
+
+The real two-terminal flow has also now been exercised manually against a live human and real `sudo` (not just the scripted-human automated suite): a real daemon in `relay` mode, a real `agent-sudo true` invocation, a human typing their actual sudo password to approve it, the command executing successfully through the real askpass binary, and `doctor` correctly reporting the resulting `last_success` receipt afterward. Verified on this project's own dev machine (sudo-rs, so `relay` mode); `timestamp` mode's equivalent live path has not yet been exercised manually the same way.
 
 ```
 src/agent_sudo/
@@ -118,4 +120,4 @@ tests/                          # pytest + pytest-asyncio, incl. test_daemon_e2e
 
 Written in Python (chosen over Go for audit-friendliness and prototyping speed, per the original design tradeoff — a Go rewrite of the daemon/askpass helper remains worth revisiting before distributing this beyond a single machine).
 
-Not yet done: the `SO_PEERCRED` ancestry check documented above as `relay` mode's real mitigation; a `doctor` check for agent/daemon OS-user separation; the manual two-terminal smoke test against a real human and real `sudo` (the automated suite covers the daemon's logic with a scripted human, but nothing yet exercises the real `sudo -A` / real askpass binary end-to-end).
+Not yet done: the `SO_PEERCRED` ancestry check documented above as `relay` mode's real mitigation; a `doctor` check for agent/daemon OS-user separation; a manual live smoke test of the `timestamp` credential mode specifically (only `relay` mode has been exercised against a real human so far, per "Status" above).
