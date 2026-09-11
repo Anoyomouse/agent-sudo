@@ -35,6 +35,10 @@ def password_cache_path() -> Path:
     return base_dir() / "sudo_pw.age"
 
 
+def last_success_path() -> Path:
+    return base_dir() / "last_success"
+
+
 def ensure_base_dir() -> Path:
     """Create the base directory 0700 if missing; verify perms/ownership if present."""
     path = base_dir()

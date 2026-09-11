@@ -47,6 +47,8 @@ max-line-length = 110
 # input readers, sudo callables) is an injected, overridable parameter so tests
 # never need a real terminal/TOTP app/sudo installation. Not a general license
 # to grow arbitrarily -- see daemon.py/totp.py if these ever need raising further.
-max-attributes = 16
+# Raised 16 -> 17 when Daemon gained record_success (the last-live-approval
+# receipt writer), for the same reason: it's an injected callable, not state.
+max-attributes = 17
 max-args = 10
 max-returns = 8

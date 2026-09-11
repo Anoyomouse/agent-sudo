@@ -81,6 +81,22 @@ On approval, the daemon runs `sudo -v` in its own trusted session — if the hum
 
 Verified empirically on a machine running sudo-rs 0.2.13 (Ubuntu, via `update-alternatives`): `visudo -c` rejects both `tty_tickets` and `timestamp_type` outright as unknown settings — a hard parse error, not a warning. Checked the sudo-rs changelog too: even the newest sudo-rs only ever adds `timestamp_type=ppid` (binds the cache to the parent process); there's no `global` option on any version. That means `timestamp` mode cannot be made to work against sudo-rs at all, by design, not misconfiguration — `relay` mode is the only option there. sudo-rs does support `-A`/`SUDO_ASKPASS` normally, which is why `relay` mode works fine against it.
 
+## Confirming it actually works end-to-end
+
+`agent-sudo doctor` is deliberately non-interactive — an agent needs to be able to call it without
+risking a hang waiting on a human. Most of its checks only verify the environment looks correct
+(socket reachable, permissions, sudoers prerequisites), which isn't the same as proof the real
+approval pipeline has ever actually worked.
+
+To close that gap without making `doctor` interactive, the daemon writes a small receipt to
+`~/.agent-sudo/last_success` (timestamp + credential mode) the moment a *real* credential is
+validated end-to-end in normal use — the real askpass binary getting a real secret back over the
+socket in `relay` mode, or a real `sudo -v` succeeding in the daemon's own session in `timestamp`
+mode (askpass is never expected to be invoked there at all). `doctor` just reads that file; it
+never triggers a fresh approval itself. A missing receipt isn't necessarily broken — a fresh
+install has no history yet — but it does mean nothing has proven the pipeline works in production;
+run one real `agent-sudo <cmd>` and approve it once to generate the receipt.
+
 ## Status
 
 Implemented and tested (41 tests passing: protocol framing, nonce replay/expiry, TOTP verification, and a real-daemon-plus-socket end-to-end harness covering both credential modes with a scripted human instead of a live one).
