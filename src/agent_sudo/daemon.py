@@ -48,11 +48,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import getpass
 import json
 import os
 import socket
 import sys
+import termios
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -75,14 +76,91 @@ class PendingRequest:
     display_id: int
 
 
-async def _default_input_reader(prompt: str) -> str:
-    return await asyncio.to_thread(input, prompt)
+class _TtyLineReader:
+    """A single, persistent reader of lines from /dev/tty, reused across every
+    prompt for the life of the daemon.
 
+    The naive approach -- spawn a fresh `asyncio.to_thread(getpass.getpass, ...)`
+    (or `input`) per prompt attempt, and just abandon it if the TTL expires --
+    leaks a real OS thread every time nobody answers in time, because Python
+    threads can't be force-cancelled. A later prompt then races that stray
+    thread over the *same* /dev/tty: both do their own termios open/disable
+    echo/read/restore-on-exit cycle concurrently. In practice this let a
+    stale, still-blocked getpass() from a timed-out request consume part of
+    the *next* request's password input and, on returning, restore the
+    terminal to the echo state it saw when *it* started (echo on) -- turning
+    echo back on mid-entry for the request actually in progress and leaking
+    trailing characters of the real password to the screen. (Observed live;
+    see the incident this class was added to fix.)
 
-async def _default_password_reader(prompt: str) -> str:
-    # getpass reads from /dev/tty directly and disables echo -- unlike a TOTP
-    # code, a real sudo password should never be visible on screen.
-    return await asyncio.to_thread(getpass.getpass, prompt)
+    Using exactly one persistent thread for the whole daemon lifetime removes
+    the race by construction: only that thread ever touches this tty's
+    termios state, and it does so once, not per attempt. Each `read_line`
+    call is a genuinely cancellable `asyncio.Queue.get()` -- cancelling it on
+    timeout is real cancellation (unlike cancelling a to_thread-wrapped
+    blocking read), so a later call never has to share a live read with an
+    earlier, abandoned one.
+    """
+
+    def __init__(self, *, echo: bool):
+        self._echo = echo
+        self._queue: asyncio.Queue[str] | None = None
+        self._thread: threading.Thread | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._fd: int | None = None
+        self._old_termios: list | None = None
+
+    async def _ensure_started(self) -> None:
+        if self._thread is not None:
+            return
+        self._loop = asyncio.get_running_loop()
+        self._queue = asyncio.Queue()
+        ready = threading.Event()
+        self._thread = threading.Thread(target=self._run, args=(ready,), daemon=True)
+        self._thread.start()
+        await asyncio.to_thread(ready.wait)
+
+    def _run(self, ready: threading.Event) -> None:
+        try:
+            fd = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+        except OSError:
+            ready.set()
+            return
+        self._fd = fd
+        if not self._echo:
+            self._old_termios = termios.tcgetattr(fd)
+            new = self._old_termios[:]
+            new[3] &= ~termios.ECHO  # 3 == lflags
+            termios.tcsetattr(fd, termios.TCSANOW, new)
+        ready.set()
+        with os.fdopen(fd, "r", closefd=True) as stream:
+            while True:
+                line = stream.readline()
+                if line == "":
+                    return  # tty closed
+                loop, queue = self._loop, self._queue
+                if loop is None or queue is None:
+                    return
+                loop.call_soon_threadsafe(queue.put_nowait, line.rstrip("\n"))
+
+    async def read_line(self, prompt: str) -> str:
+        await self._ensure_started()
+        assert self._queue is not None
+        # Anything already sitting here was typed after an earlier prompt
+        # gave up waiting for it (TTL expired, or a wrong password) -- it
+        # belongs to that abandoned attempt, not this new one.
+        while not self._queue.empty():
+            self._queue.get_nowait()
+            print("[agent-sudo] discarded input for an already-expired request", file=sys.stderr)
+        print(prompt, end="", file=sys.stdout, flush=True)
+        return await self._queue.get()
+
+    def close(self) -> None:
+        if self._fd is not None and self._old_termios is not None:
+            try:
+                termios.tcsetattr(self._fd, termios.TCSAFLUSH, self._old_termios)
+            except OSError:
+                pass
 
 
 def _default_record_success(credential_mode: str, now: float) -> None:
@@ -116,8 +194,8 @@ class Daemon:
         approval_window_seconds: float = DEFAULT_APPROVAL_WINDOW_SECONDS,
         credential_mode: str = "relay",
         now=time.time,
-        input_reader=_default_input_reader,
-        password_reader=_default_password_reader,
+        input_reader=None,
+        password_reader=None,
         refresh_timestamp=sudo_cache.refresh_timestamp,
         validate_password=sudo_cache.validate_password,
         record_success=_default_record_success,
@@ -131,8 +209,14 @@ class Daemon:
         self.approval_window_seconds = approval_window_seconds
         self.credential_mode = credential_mode
         self._now = now
-        self._input_reader = input_reader
-        self._password_reader = password_reader
+        # The real (non-test) default for each is a persistent _TtyLineReader
+        # bound method -- see its docstring for why that matters. `serve()`
+        # recovers the reader object from the bound method (`.__self__`) to
+        # close it on shutdown, rather than this class holding its own
+        # reference too. Tests inject their own scripted readers (plain
+        # functions, no `__self__`) and never touch a _TtyLineReader.
+        self._input_reader = input_reader or _TtyLineReader(echo=True).read_line
+        self._password_reader = password_reader or _TtyLineReader(echo=False).read_line
         self._refresh_timestamp = refresh_timestamp
         self._validate_password = validate_password
         self._record_success = record_success
@@ -305,7 +389,7 @@ class Daemon:
             done, _pending = await asyncio.wait({input_task}, timeout=remaining)
 
             if input_task not in done:
-                input_task.add_done_callback(_discard_stray_input)
+                input_task.cancel()
                 return "deny", "timeout"
 
             try:
@@ -339,7 +423,7 @@ class Daemon:
             done, _pending = await asyncio.wait({input_task}, timeout=remaining)
 
             if input_task not in done:
-                input_task.add_done_callback(_discard_stray_input)
+                input_task.cancel()
                 return "deny", "timeout"
 
             try:
@@ -436,13 +520,14 @@ class Daemon:
                 await server.serve_forever()
         finally:
             self._worker_task.cancel()
-
-
-def _discard_stray_input(task: asyncio.Task) -> None:
-    if task.cancelled():
-        return
-    if task.exception() is None:
-        print("[agent-sudo] discarded input for an already-expired request", file=sys.stderr)
+            # Restore terminal echo if the relay-mode password reader ever
+            # disabled it -- otherwise the human's shell is left with echo
+            # off after the daemon exits. Only the real _TtyLineReader
+            # defaults need this; an injected test reader has no __self__.
+            for reader in (self._input_reader, self._password_reader):
+                tty = getattr(reader, "__self__", None)
+                if isinstance(tty, _TtyLineReader):
+                    tty.close()
 
 
 def main() -> None:
