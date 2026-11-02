@@ -35,7 +35,7 @@ Enroll TOTP (`timestamp` mode only -- `relay` mode needs no enrollment):
 
     python scripts/enroll_totp.py
 
-The `agent-sudo`, `agent-sudo-askpass`, `agent-sudo-daemon` console scripts are symlinked into `~/.local/bin` on this machine so any process resolves them on PATH without activating the venv.
+The `agent-sudo`, `agent-sudo-askpass`, `agent-sudo-daemon` console scripts are symlinked into `~/.local/bin` (on every machine, not just this one -- see README "Install") so any process resolves them on PATH without activating the venv.
 
 ## Architecture
 
