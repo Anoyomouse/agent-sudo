@@ -83,6 +83,26 @@ On approval, the daemon runs `sudo -v` in its own trusted session — if the hum
 
 Verified empirically on a machine running sudo-rs 0.2.13 (Ubuntu, via `update-alternatives`): `visudo -c` rejects both `tty_tickets` and `timestamp_type` outright as unknown settings — a hard parse error, not a warning. Checked the sudo-rs changelog too: even the newest sudo-rs only ever adds `timestamp_type=ppid` (binds the cache to the parent process); there's no `global` option on any version. That means `timestamp` mode cannot be made to work against sudo-rs at all, by design, not misconfiguration — `relay` mode is the only option there. sudo-rs does support `-A`/`SUDO_ASKPASS` normally, which is why `relay` mode works fine against it.
 
+## Install
+
+    git clone https://github.com/Anoyomouse/agent-sudo.git ~/agent-sudo
+    cd ~/agent-sudo
+    python3 -m venv .venv
+    .venv/bin/pip install -e .
+
+That puts the `agent-sudo`, `agent-sudo-askpass` and `agent-sudo-daemon` console scripts in `.venv/bin`. Then make them resolvable on `PATH` for *non-interactive* callers, which is how an AI agent runs them:
+
+    mkdir -p ~/.local/bin
+    ln -s ~/agent-sudo/.venv/bin/agent-sudo{,-askpass,-daemon} ~/.local/bin/
+
+Why symlinks and not a `PATH=...` line in `~/.bashrc`: Ubuntu's default `~/.bashrc` returns early for non-interactive shells, so anything exported below that guard never applies to `ssh host cmd` or an agent's tool shell. `~/.profile` adds `~/.local/bin` for login shells only. `agent-sudo` also needs `agent-sudo-askpass` resolvable on `PATH` (it is the `SUDO_ASKPASS` target); calling `.venv/bin/agent-sudo` by full path without the venv `bin` directory on `PATH` fails with "agent-sudo-askpass not found on PATH".
+
+For a one-off remote command over SSH, a login shell picks up `~/.local/bin`:
+
+    ssh host 'bash -lc "agent-sudo <cmd>"'
+
+Run `agent-sudo doctor` afterwards to check permissions and sudoers prerequisites. The approval daemon (`agent-sudo-daemon`) is started by the human in their own terminal, never by the agent.
+
 ## Confirming it actually works end-to-end
 
 `agent-sudo doctor` is deliberately non-interactive — an agent needs to be able to call it without
